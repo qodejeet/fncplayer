@@ -1,0 +1,108 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Watch</title>
+  <script src="https://cdn.jsdelivr.net/npm/hls.js@latest"></script>
+  <link href="https://cdn.jsdelivr.net/npm/tailwindcss@2.2.19/dist/tailwind.min.css" rel="stylesheet">
+  <style>
+    body { background:#0f0f0f; color:#fff; }
+    video { width:100%; max-height:80vh; background:#000; border-radius:16px; }
+  </style>
+</head>
+<body class="min-h-screen flex items-center justify-center p-4">
+  <div class="w-full max-w-5xl">
+    <div class="flex items-center justify-between mb-3">
+      <h1 class="text-xl font-semibold">Player</h1>
+      <a href="/" class="text-sm text-gray-300 hover:text-white">← Back</a>
+    </div>
+
+    <video id="video" controls playsinline></video>
+
+    <div class="mt-4 text-sm text-gray-300">
+      <div><span class="text-gray-500">Match ID:</span> <span id="mid">-</span></div>
+      <div class="break-all"><span class="text-gray-500">Stream URL:</span> <span id="surl">-</span></div>
+      <div id="err" class="mt-2 text-red-400"></div>
+    </div>
+  </div>
+
+  <script>
+    const DATA_URL = 'https://raw.githubusercontent.com/Jitendra-unatti/fancode/refs/heads/main/data/fancode.json';
+
+    const qs = new URLSearchParams(location.search);
+    const id = qs.get('id');          // match_id
+    const cdnKey = qs.get('cdn');     // adfree_stream / dai_stream / STREAMING_CDN key
+    const video = document.getElementById('video');
+
+    document.getElementById('mid').textContent = id || '-';
+
+    function showError(msg){
+      document.getElementById('err').textContent = msg;
+    }
+
+    async function getStreamUrl() {
+      if (!id || !cdnKey) throw new Error("Missing id or cdn in URL.");
+      const res = await fetch(DATA_URL);
+      const data = await res.json();
+      const matches = Array.isArray(data.matches) ? data.matches : [];
+
+      const match = matches.find(m => String(m.match_id) === String(decodeURIComponent(id)));
+      if (!match) throw new Error("Match not found in JSON.");
+
+      // 1) direct keys: adfree_stream / dai_stream etc.
+      if (match[cdnKey] && match[cdnKey] !== 'Unavailable') return match[cdnKey];
+
+      // 2) nested STREAMING_CDN keys
+      if (match.STREAMING_CDN && match.STREAMING_CDN[cdnKey] && String(match.STREAMING_CDN[cdnKey]).toLowerCase() !== 'unavailable') {
+        return match.STREAMING_CDN[cdnKey];
+      }
+
+      throw new Error("This CDN stream is not available for this match.");
+    }
+
+    function playHls(url){
+      document.getElementById('surl').textContent = url;
+
+      // Safari (iOS/macOS) often supports HLS natively
+      if (video.canPlayType('application/vnd.apple.mpegurl')) {
+        video.src = url;
+        video.play().catch(()=>{});
+        return;
+      }
+
+      // Other browsers: use hls.js for .m3u8
+      if (Hls.isSupported()) {
+        const hls = new Hls({
+          maxBufferLength: 30,
+          liveSyncDurationCount: 3
+        });
+        hls.loadSource(url);
+        hls.attachMedia(video);
+        hls.on(Hls.Events.ERROR, function (event, data) {
+          showError("Player error: " + (data?.details || "unknown"));
+        });
+        hls.on(Hls.Events.MANIFEST_PARSED, function () {
+          video.play().catch(()=>{});
+        });
+      } else {
+        showError("HLS not supported in this browser.");
+      }
+    }
+
+    (async () => {
+      try {
+        const url = await getStreamUrl();
+        // basic check
+        if (!url || typeof url !== "string") throw new Error("Invalid stream URL.");
+
+        // If it’s DRM (Widevine/FairPlay) the normal player may fail:
+        // You’ll see errors / it won’t start. That means you need a DRM-enabled player + license.
+        playHls(url);
+      } catch (e) {
+        showError(e.message || "Failed to start playback.");
+      }
+    })();
+  </script>
+</body>
+</html>
